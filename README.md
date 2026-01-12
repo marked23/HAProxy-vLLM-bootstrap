@@ -1,6 +1,6 @@
 Posted by wendell on [the Level1Techs forum](https://forum.level1techs.com/t/4x-r9700-pro-setup-with-ha-proxy-for-failover-high-availability/244012).  It is the work of eousphoros.
 
-# HAProxy-vLLM-bootstrap
+# HAProxy-vLLM-bootstrap for AMD ROCm GPUs
 
 ## Local OpenAI-Compatible LLM Inference Endpoint with Redundancy
 
