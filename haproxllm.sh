@@ -107,7 +107,8 @@ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-}"   # Empty = auto; set to tu
 # For gpt-oss models, this is typically "chat_template.jinja" or "tokenizer_chat_template.jinja"
 # Set to empty string to use model's built-in template from tokenizer_config.json
 # Set to a full path for custom templates (e.g., "/models/custom_template.jinja")
-CHAT_TEMPLATE="${CHAT_TEMPLATE:-chat_template.jinja}"  # Default: look for chat_template.jinja in model dir
+# Use `${CHAT_TEMPLATE-chat_template.jinja}` (no colon) so an explicit empty CHAT_TEMPLATE is preserved
+CHAT_TEMPLATE="${CHAT_TEMPLATE-chat_template.jinja}"  # Default: look for chat_template.jinja in model dir
 
 # Compute model basename early (needed for chat template path resolution)
 MODEL_BASENAME="$(basename "${MODEL_DIR}")"
@@ -243,10 +244,14 @@ get_gpu_marketing_name() {
 
 get_gpu_vram_gb() {
   # Get VRAM from rocminfo pool info (in KB, convert to GB)
-  # Note: Using grep -oE instead of -oP for portability
+  # Note: First COARSE GRAINED pool is often system RAM (shared with CPU)
+  # Second COARSE GRAINED pool is typically the first discrete GPU's VRAM
+  # TODO: There has to be a more reliable way to get VRAM per GPU.
   local vram_kb
-  vram_kb=$(rocminfo 2>/dev/null | grep -A1 'GLOBAL.*COARSE' | grep 'Size:' | grep -oE '[0-9]+' | head -1) || true
+  vram_kb=$(rocminfo 2>/dev/null | awk '/COARSE GRAINED/{getline; if(/Size:/){print $2}}' | sed 's/(.*)//' | awk 'NR==2') || true
+  
   if [[ -n "$vram_kb" && "$vram_kb" -gt 0 ]] 2>/dev/null; then
+    # Convert KB to GB (integer division)
     echo $(( vram_kb / 1024 / 1024 ))
   else
     echo "0"
@@ -325,6 +330,8 @@ validate_gpu_setup() {
   gpu_vram=$(get_gpu_vram_gb) || true
   gpu_vram="${gpu_vram:-0}"
 
+  # Display VRAM info
+  # Note: rocm-smi only shows discrete GPUs; integrated graphics typically don't appear in the count
   if [[ "$gpu_vram" -gt 0 ]] 2>/dev/null; then
     log "Per-GPU VRAM: ~${gpu_vram}GB, Total: ~$((gpu_vram * gpu_count))GB"
   fi
@@ -687,7 +694,7 @@ fi
 
 # Create Python venv for hf CLI downloads
 log "Setting up Python venv for Hugging Face CLI ..."
-if [[ ! -d "$STACK_DIR/venv" ]]; then
+if [[ ! -d "$STACK_DIR/venv/bin" ]]; then
   python3 -m venv "$STACK_DIR/venv"
 fi
 # shellcheck disable=SC1091
@@ -695,7 +702,7 @@ source "$STACK_DIR/venv/bin/activate"
 pip install -U pip wheel
 
 log "Installing huggingface-hub CLI ..."
-if ! pip install -U "huggingface-hub[cli]" hf-transfer; then
+if ! pip install -U "huggingface-hub" hf-transfer; then
   log "WARNING: Failed to install huggingface-hub. Model download may fail."
 fi
 
@@ -729,7 +736,7 @@ else
     # Use module invocation as fallback
     HF_CLI_CMD="$STACK_DIR/venv/bin/python -m huggingface_hub.commands.huggingface_cli"
   else
-    die "huggingface-hub not properly installed. Try: $STACK_DIR/venv/bin/pip install --force-reinstall 'huggingface-hub[cli]'"
+    die "huggingface-hub not properly installed. Try: $STACK_DIR/venv/bin/pip install --force-reinstall 'huggingface-hub'"
   fi
 
   log "Using HF CLI: $HF_CLI_CMD"
@@ -757,9 +764,7 @@ generate_tls_certificates() {
   mkdir -p "$cert_dir"
   chmod 700 "$cert_dir"
 
-  # Get hostname and IP for SANs
-  local hostname
-  hostname="$(hostname -f 2>/dev/null || hostname)"
+  # Get IP addresses for SANs (hostname is set globally)
   local ip_addrs
   ip_addrs="$(hostname -I 2>/dev/null | tr ' ' '\n' | grep -v '^$' | head -5)"
 
@@ -893,6 +898,9 @@ SSLCONF
   HAPROXY_TLS_PEM="$server_pem"
 }
 
+# Set hostname globally (used by TLS generation and HAProxy config)
+hostname="$(hostname -f 2>/dev/null || hostname)"
+
 # Generate TLS certificates if enabled
 HAPROXY_TLS_PEM=""
 if [[ "$ENABLE_TLS" == "1" ]]; then
@@ -912,37 +920,37 @@ detect_gpu_and_select_image() {
     gfx1201|gfx1200)
       DETECTED_GPU_TYPE="r9700"
       DETECTED_GPU_NAME="AMD Radeon AI PRO R9700 (RDNA 4)"
-      DEFAULT_IMAGE="rocm/vllm-dev:open-r9700-08052025"
+      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-r9700-08052025"
       ;;
     gfx942)
       DETECTED_GPU_TYPE="mi300"
       DETECTED_GPU_NAME="AMD Instinct MI300X/MI325 (CDNA 3)"
-      DEFAULT_IMAGE="rocm/vllm-dev:open-mi300-08052025"
+      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi300-08052025"
       ;;
     gfx950)
       DETECTED_GPU_TYPE="mi355"
       DETECTED_GPU_NAME="AMD Instinct MI350X (CDNA 3)"
-      DEFAULT_IMAGE="rocm/vllm-dev:open-mi355-08052025"
+      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi355-08052025"
       ;;
     gfx90a)
       DETECTED_GPU_TYPE="mi200"
       DETECTED_GPU_NAME="AMD Instinct MI200 series (CDNA 2)"
-      DEFAULT_IMAGE="rocm/vllm:latest"
+      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
       ;;
     gfx908)
       DETECTED_GPU_TYPE="mi100"
       DETECTED_GPU_NAME="AMD Instinct MI100 (CDNA)"
-      DEFAULT_IMAGE="rocm/vllm:latest"
+      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
       ;;
     gfx1100|gfx1101|gfx1102|gfx1103)
       DETECTED_GPU_TYPE="rdna3"
       DETECTED_GPU_NAME="AMD Radeon RDNA 3"
-      DEFAULT_IMAGE="rocm/vllm:latest"
+      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
       ;;
     *)
       DETECTED_GPU_TYPE="unknown"
       DETECTED_GPU_NAME="Unknown AMD GPU (ISA: ${gpu_isa:-not detected})"
-      DEFAULT_IMAGE="rocm/vllm:latest"
+      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
       ;;
   esac
 
@@ -951,15 +959,15 @@ detect_gpu_and_select_image() {
     case "$GPU_TYPE" in
       r9700)
         DETECTED_GPU_TYPE="r9700"
-        DEFAULT_IMAGE="rocm/vllm-dev:open-r9700-08052025"
+        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-r9700-08052025"
         ;;
       mi300)
         DETECTED_GPU_TYPE="mi300"
-        DEFAULT_IMAGE="rocm/vllm-dev:open-mi300-08052025"
+        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi300-08052025"
         ;;
       mi355)
         DETECTED_GPU_TYPE="mi355"
-        DEFAULT_IMAGE="rocm/vllm-dev:open-mi355-08052025"
+        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi355-08052025"
         ;;
       *)
         log "WARNING: Unknown GPU_TYPE '$GPU_TYPE'. Using auto-detection."
@@ -994,12 +1002,12 @@ else
   # Fallback: use provided GPU_TYPE or default image
   if [[ "$GPU_TYPE" != "auto" ]]; then
     case "$GPU_TYPE" in
-      r9700)  VLLM_IMAGE="${VLLM_IMAGE:-rocm/vllm-dev:open-r9700-08052025}"; DETECTED_GPU_TYPE="r9700" ;;
-      mi300)  VLLM_IMAGE="${VLLM_IMAGE:-rocm/vllm-dev:open-mi300-08052025}"; DETECTED_GPU_TYPE="mi300" ;;
-      mi355)  VLLM_IMAGE="${VLLM_IMAGE:-rocm/vllm-dev:open-mi355-08052025}"; DETECTED_GPU_TYPE="mi355" ;;
+      r9700)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-r9700-08052025}"; DETECTED_GPU_TYPE="r9700" ;;
+      mi300)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-mi300-08052025}"; DETECTED_GPU_TYPE="mi300" ;;
+      mi355)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-mi355-08052025}"; DETECTED_GPU_TYPE="mi355" ;;
     esac
   fi
-  VLLM_IMAGE="${VLLM_IMAGE:-rocm/vllm:latest}"
+  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm:latest}"
   log "rocminfo not available; using image: ${VLLM_IMAGE}"
   log "  (Set GPU_TYPE=r9700|mi300|mi355 to use GPU-specific optimized images)"
 fi
@@ -1121,8 +1129,8 @@ backend be_vllm
   # - maxlife 4h: force re-balance after 4 hours regardless of activity
   cookie VLLM_BACKEND insert indirect nocache httponly maxidle 30m maxlife 4h
 
-  # Health checking
-  option httpchk GET /health
+  # Health checking (vLLM OpenAI-compatible endpoints expose /v1/models)
+  option httpchk GET /v1/models
   http-check expect status 200
 
   # Retry configuration (failover to other backend if sticky backend fails)
@@ -1142,8 +1150,8 @@ backend be_vllm
   # rise=2: mark up after 2 successes; slowstart=180s: ramp up traffic over 3min
   # cookie: value set in VLLM_BACKEND cookie for sticky routing
   default-server inter 5s fall 3 rise 2 slowstart 180s maxconn 200
-  server vllm1 127.0.0.1:${VLLM1_PORT} check cookie v1
-  server vllm2 127.0.0.1:${VLLM2_PORT} check cookie v2
+  server vllm1 ${hostname}:${VLLM1_PORT} check cookie v1
+  server vllm2 ${hostname}:${VLLM2_PORT} check cookie v2
 EOF
 
 TP1="$(count_csv_items "$VLLM1_GPUS")"
@@ -1302,9 +1310,10 @@ log "Writing Docker Compose stack ..."
 cat >"$STACK_DIR/compose/docker-compose.yml" <<EOF
 services:
   haproxy:
-    image: haproxy:2.9
+    image: docker.io/haproxy:2.9
     network_mode: host
     restart: unless-stopped
+    stop_grace_period: 30s
     deploy:
       resources:
         limits:
@@ -1317,6 +1326,7 @@ ${HAPROXY_VOLUMES}
     network_mode: host
     ipc: host
     restart: unless-stopped
+    stop_grace_period: 60s
     shm_size: "16gb"
     ulimits:
       memlock: -1
@@ -1359,6 +1369,7 @@ ${VLLM1_GPU_ENV}      - HF_HOME=/hf
     network_mode: host
     ipc: host
     restart: unless-stopped
+    stop_grace_period: 60s
     shm_size: "16gb"
     ulimits:
       memlock: -1
@@ -1399,7 +1410,7 @@ EOF
 
 
 log "Pulling images ..."
-docker pull haproxy:2.9
+docker pull docker.io/haproxy:2.9
 
 # Pull vLLM image with helpful error message if it fails
 log "Pulling vLLM ROCm image: ${VLLM_IMAGE} ..."
@@ -1447,8 +1458,8 @@ fi
 
 log "  HAProxy LB:     ${LB_PROTO}://<this-host>:${LB_PORT}/v1"
 log "  HAProxy Stats:  http://<this-host>:8404/stats"
-log "  Backend 1:      http://127.0.0.1:${VLLM1_PORT}/v1 (GPUs: ${VLLM1_GPUS}, TP=${TP1})"
-log "  Backend 2:      http://127.0.0.1:${VLLM2_PORT}/v1 (GPUs: ${VLLM2_GPUS}, TP=${TP2})"
+log "  Backend 1:      http://${hostname}:${VLLM1_PORT}/v1 (GPUs: ${VLLM1_GPUS}, TP=${TP1})"
+log "  Backend 2:      http://${hostname}:${VLLM2_PORT}/v1 (GPUs: ${VLLM2_GPUS}, TP=${TP2})"
 log ""
 
 # TLS info
@@ -1476,12 +1487,12 @@ log ""
 
 log "Quick tests:"
 if [[ "$ENABLE_TLS" == "1" ]]; then
-  log "  curl -s https://127.0.0.1:${LB_PORT}/v1/models | jq .       # Uses system CA"
-  log "  curl -s --http2 https://127.0.0.1:${LB_PORT}/v1/models      # Force HTTP/2"
+  log "  curl -s https://${hostname}:${LB_PORT}/v1/models | jq .       # Uses system CA"
+  log "  curl -s --http2 https://${hostname}:${LB_PORT}/v1/models      # Force HTTP/2"
 else
-  log "  curl -s http://127.0.0.1:${LB_PORT}/v1/models | jq ."
+  log "  curl -s http://${hostname}:${LB_PORT}/v1/models | jq ."
 fi
-log "  curl -s http://127.0.0.1:${LB_PORT}/health"
+log "  curl -s http://${hostname}:${LB_PORT}/v1/models | jq ."
 log ""
 log "Monitoring:"
 log "  docker compose -f ${STACK_DIR}/compose/docker-compose.yml logs -f"

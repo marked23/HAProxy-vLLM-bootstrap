@@ -7,10 +7,14 @@
 # want to change, then run this script instead of the main one.
 #
 # Usage:
-#   sudo bash haproxllm-config.sh
+#   sudo bash launch.sh
 #
-# All variables below are set to their defaults from haproxllm.sh.
-# Uncomment and modify any variables you want to override.
+# CURRENT WORKING CONFIG (tested on Ubuntu 25.10 with 6x RDNA 3 GPUs):
+#   - Model: mistralai/Mistral-7B-Instruct-v0.2 (7B, ungated)
+#   - GPUs: 0,1,2,3 (using 4 of 6 GPUs)
+#   - Tensor Parallelism: TP=2 per backend (2 backends total)
+#   - Container Runtime: Podman with podman-compose
+#   - Endpoints: http://wide.local:8000/v1 (HAProxy), http://wide.local:8404/stats
 ################################################################################
 
 # ============================================================================
@@ -22,10 +26,12 @@ export STACK_DIR="/opt/llm-stack"
 
 # Model ID from Hugging Face Hub (format: organization/model-name)
 # Examples:
-#   - eousphoros/persona_epsilon_20b_mxfp4 (20B, mixed precision)
+#   - mistralai/Mistral-7B-Instruct-v0.2 (7B, good for RDNA 3, ungated)
+#   - meta-llama/Llama-3.1-8B-Instruct (8B, GATED - requires HF auth)
+#   - eousphoros/persona_epsilon_20b_mxfp4 (20B, MXFP4 not compatible with RDNA 3)
 #   - openai/gpt-oss-120b (120B, requires high VRAM)
 #   - openai/gpt-oss-20b (20B, good for Radeon AI PRO R9700)
-export MODEL_ID="eousphoros/persona_epsilon_20b_mxfp4"
+export MODEL_ID="mistralai/Mistral-7B-Instruct-v0.2"
 
 # Local directory for model weights (auto-derived from MODEL_ID if not set)
 # The script converts "/" to "_" in the MODEL_ID to create the directory name
@@ -54,18 +60,20 @@ export GPU_TYPE="auto"
 #   - "env": Use HIP_VISIBLE_DEVICES environment variable (simpler)
 #   - "devices": Mount only specific /dev/dri/renderD* devices (more reliable)
 # Switch to "devices" if containers don't see GPUs correctly with "env"
-export GPU_ISOLATION="env"
+export GPU_ISOLATION="devices"
 
 # ============================================================================
 # GPU Assignment per vLLM Backend
 # ============================================================================
 
 # GPU indices for first backend (comma-separated, no spaces)
-# Default: "0,1" = GPUs 0 and 1 with tensor parallelism = 2
-# Options for 4 GPUs:
-#   - "0,1" / "2,3" : 2 backends × TP=2 (balanced throughput/latency)
-#   - "0" / "1" / "2" / "3" : 4 backends × TP=1 (max throughput, smaller context)
-#   - "0,1,2,3" : 1 backend × TP=4 (max context length)
+# For 6 GPUs with Mistral-7B: Using 2 GPUs per backend (TP=2)
+# Mistral has 32 attention heads which must divide evenly by TP
+# Options for 6 GPUs:
+#   - "0,1" / "2,3" : 2 backends × TP=2 (WORKING CONFIG - uses 4 GPUs)
+#   - "0,1,2,3" : 1 backend × TP=4 (max context, uses 4 GPUs)
+#   - "0" / "1" / "2" / "3" / "4" / "5" : 6 backends × TP=1 (max throughput, uses all 6)
+# Note: TP=3 doesn't work with Mistral (32 heads not divisible by 3)
 export VLLM1_GPUS="0,1"
 
 # GPU indices for second backend
@@ -81,6 +89,8 @@ export VLLM2_GPUS="2,3"
 
 # HAProxy load balancer port (clients connect here)
 export LB_PORT="8000"
+# Public host name for accessing the load balancer (defaults to wide.local)
+export LB_HOST="wide.local"
 
 # vLLM backend ports (internal, load-balanced by HAProxy)
 export VLLM1_PORT="8001"
@@ -148,7 +158,8 @@ export KV_CACHE_DTYPE="auto"
 #   - "": Use model's built-in template from tokenizer_config.json
 #   - "/path/to/custom_template.jinja": Use custom template (absolute path)
 # Required for models with reasoning tokens (e.g., gpt-oss)
-export CHAT_TEMPLATE="chat_template.jinja"
+# Llama models have built-in templates, so using empty string
+export CHAT_TEMPLATE=""
 
 # ============================================================================
 # TLS/HTTPS Configuration
@@ -177,7 +188,8 @@ export TLS_SERVER_CN="llm-server"
 
 # Hugging Face API token (optional; some models require authentication)
 # Get your token from: https://huggingface.co/settings/tokens
-# export HF_TOKEN=""
+# Preserves existing HF_TOKEN from environment, or set explicitly: export HF_TOKEN="hf_..."
+export HF_TOKEN="${HF_TOKEN:-}"
 
 # ============================================================================
 # ROCm and GPU Validation
@@ -188,7 +200,8 @@ export MIN_ROCM_VERSION="6.0"
 
 # Expected number of GPUs (0 = skip validation)
 # Set to your actual GPU count to enable validation warnings
-export EXPECTED_GPU_COUNT="4"
+# System has 6 RDNA 3 GPUs
+export EXPECTED_GPU_COUNT="6"
 
 # ROCm version to install (if not already installed)
 export ROCM_VERSION="6.3"
