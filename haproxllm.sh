@@ -4,17 +4,17 @@ set -euo pipefail
 ################################################################################
 # LLM Inference Stack: vLLM + HAProxy LB (single host) - Ubuntu 24.04
 #
-# Supported GPUs with GPU-specific optimized images:
-#   - AMD Radeon AI PRO R9700 (RDNA 4, gfx1201) - rocm/vllm-dev:open-r9700-08052025
-#   - AMD Instinct MI300X/MI325 (CDNA 3, gfx942) - rocm/vllm-dev:open-mi300-08052025
-#   - AMD Instinct MI350X (CDNA 3, gfx950) - rocm/vllm-dev:open-mi355-08052025
+# Supported GPUs with GPU-specific optimized images (rocm/vllm ROCm 7.x tags):
+#   - AMD Radeon AI PRO R9700 (RDNA 4, gfx1201) - rocm/vllm:rocm7.13.0_gfx120X-all_*
+#   - AMD Instinct MI300X/MI325 (CDNA 3, gfx942) - rocm/vllm:rocm7.13.0_gfx94X-dcgpu_*
+#   - AMD Instinct MI350X (CDNA 3, gfx950) - rocm/vllm:rocm7.13.0_gfx950-dcgpu_*
+#   - AMD Radeon RDNA 3 (gfx1100-gfx1103) - rocm/vllm:rocm7.13.0_gfx110X-all_*
 #
 # Also supported with rocm/vllm:latest:
 #   - AMD Instinct MI250/MI210/MI100 series (CDNA)
-#   - AMD Radeon PRO W7900/W7800 (RDNA 3 - limited support)
 #
 # This script installs:
-#   - ROCm 6.3 (AMD GPU compute stack) - skipped if already installed
+#   - ROCm 7.2.4 (AMD GPU compute stack) - skipped if already installed
 #   - amdgpu-dkms kernel driver - skipped if already installed
 #   - Docker with ROCm container support
 #   - vLLM (ROCm build) with HAProxy load balancer
@@ -50,15 +50,19 @@ MODEL_DIR="${MODEL_DIR:-$STACK_DIR/models/${MODEL_ID//\//_}}"
 
 # vLLM image: AMD official ROCm builds
 #
-# GPU-SPECIFIC IMAGES (recommended for best performance):
-#   - rocm/vllm-dev:open-r9700-08052025    # Radeon AI PRO R9700 (RDNA 4, gfx1201)
-#   - rocm/vllm-dev:open-mi300-08052025    # MI300X/MI325 series (gfx942)
-#   - rocm/vllm-dev:open-mi355-08052025    # MI350X series (gfx950)
+# Since ROCm 7.x, rocm/vllm publishes architecture-specific tags directly
+# (the old rocm/vllm-dev:open-* images are superseded). Check
+# https://hub.docker.com/r/rocm/vllm/tags for newer builds.
 #
-# General ROCm images (check https://hub.docker.com/r/rocm/vllm/tags):
+# GPU-SPECIFIC IMAGES (recommended for best performance):
+#   - rocm/vllm:rocm7.13.0_gfx120X-all_...  # RDNA 4 (R9700, gfx1200/gfx1201)
+#   - rocm/vllm:rocm7.13.0_gfx94X-dcgpu_... # MI300X/MI325 series (gfx942)
+#   - rocm/vllm:rocm7.13.0_gfx950-dcgpu_... # MI350X series (gfx950)
+#   - rocm/vllm:rocm7.13.0_gfx110X-all_...  # RDNA 3 (gfx1100-gfx1103)
+#
+# General ROCm images:
 #   - rocm/vllm:latest                     # Most recent stable
 #   - rocm/vllm:rocm7.0.0_vllm_0.11.2_20251210
-#   - rocm/vllm:rocm6.3.1_vllm_0.8.5_20250521
 #
 # IMPORTANT: Do NOT use vllm/vllm-openai - that's CUDA only!
 #
@@ -66,6 +70,13 @@ MODEL_DIR="${MODEL_DIR:-$STACK_DIR/models/${MODEL_ID//\//_}}"
 # Valid GPU_TYPE values: r9700, mi300, mi355, auto (default: auto-detect or rocm/vllm:latest)
 GPU_TYPE="${GPU_TYPE:-auto}"
 VLLM_IMAGE="${VLLM_IMAGE:-}"  # Will be set by auto-detection if empty
+
+# Per-architecture default images (override individually if needed)
+VLLM_IMAGE_RDNA4="${VLLM_IMAGE_RDNA4:-docker.io/rocm/vllm:rocm7.13.0_gfx120X-all_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1}"
+VLLM_IMAGE_MI300="${VLLM_IMAGE_MI300:-docker.io/rocm/vllm:rocm7.13.0_gfx94X-dcgpu_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1}"
+VLLM_IMAGE_MI355="${VLLM_IMAGE_MI355:-docker.io/rocm/vllm:rocm7.13.0_gfx950-dcgpu_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1}"
+VLLM_IMAGE_RDNA3="${VLLM_IMAGE_RDNA3:-docker.io/rocm/vllm:rocm7.13.0_gfx110X-all_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1}"
+VLLM_IMAGE_FALLBACK="${VLLM_IMAGE_FALLBACK:-docker.io/rocm/vllm:latest}"
 
 # Ports
 LB_PORT="${LB_PORT:-8000}"
@@ -355,7 +366,7 @@ validate_gpu_setup() {
         log "║                                                                               ║"
         log "║  AMD Radeon AI PRO R9700 detected with official ROCm vLLM support!            ║"
         log "║                                                                               ║"
-        log "║  Using optimized image: rocm/vllm-dev:open-r9700-08052025                     ║"
+        log "║  Using optimized image: rocm/vllm rocm7.13.0_gfx120X-all build                ║"
         log "║  AITER kernels: Enabled for maximum performance                               ║"
         log "║  CUDA Graph: Full compilation enabled                                         ║"
         log "║                                                                               ║"
@@ -398,9 +409,12 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
   linux-headers-"$(uname -r)"
 
 # ROCm installation
-# ROCm 6.3: AMD's GPU compute stack (required for MI300X support)
+# ROCm 7.2.4: AMD's GPU compute stack (required for MI300X support)
 # amdgpu-dkms: Kernel driver for AMD GPUs
-ROCM_VERSION="${ROCM_VERSION:-6.3}"
+# Since ROCm 7.x the amdgpu driver repo is versioned separately from ROCm
+# (e.g. ROCm 7.2.4 pairs with driver 30.30.4 at repo.radeon.com/amdgpu/30.30.4)
+ROCM_VERSION="${ROCM_VERSION:-7.2.4}"
+AMDGPU_DRIVER_VERSION="${AMDGPU_DRIVER_VERSION:-30.30.4}"
 
 install_rocm() {
   log "Installing ROCm ${ROCM_VERSION} and amdgpu driver ..."
@@ -408,7 +422,18 @@ install_rocm() {
   # Add AMD ROCm repository
   # Reference: https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/install-overview.html
   local rocm_repo_url="https://repo.radeon.com/rocm/apt/${ROCM_VERSION}"
-  local amdgpu_repo_url="https://repo.radeon.com/amdgpu/${ROCM_VERSION}/ubuntu"
+  local amdgpu_repo_url="https://repo.radeon.com/amdgpu/${AMDGPU_DRIVER_VERSION}/ubuntu"
+
+  # Determine Ubuntu codename for the repo suites (ROCm 7.x publishes jammy/noble)
+  local ubuntu_codename
+  ubuntu_codename="$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-}")"
+  case "$ubuntu_codename" in
+    jammy|noble) ;;
+    *)
+      log "WARNING: Ubuntu codename '${ubuntu_codename:-unknown}' has no ROCm repo; using 'noble'."
+      ubuntu_codename="noble"
+      ;;
+  esac
 
   # Install prerequisites
   DEBIAN_FRONTEND=noninteractive apt-get install -y \
@@ -420,12 +445,12 @@ install_rocm() {
 
   # Add AMDGPU repository (for kernel driver)
   cat >/etc/apt/sources.list.d/amdgpu.list <<AMDGPUEOF
-deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] ${amdgpu_repo_url} jammy main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] ${amdgpu_repo_url} ${ubuntu_codename} main
 AMDGPUEOF
 
   # Add ROCm repository
   cat >/etc/apt/sources.list.d/rocm.list <<ROCMEOF
-deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] ${rocm_repo_url} jammy main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] ${rocm_repo_url} ${ubuntu_codename} main
 ROCMEOF
 
   # Set repository priority (prefer ROCm packages)
@@ -920,37 +945,37 @@ detect_gpu_and_select_image() {
     gfx1201|gfx1200)
       DETECTED_GPU_TYPE="r9700"
       DETECTED_GPU_NAME="AMD Radeon AI PRO R9700 (RDNA 4)"
-      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-r9700-08052025"
+      DEFAULT_IMAGE="$VLLM_IMAGE_RDNA4"
       ;;
     gfx942)
       DETECTED_GPU_TYPE="mi300"
       DETECTED_GPU_NAME="AMD Instinct MI300X/MI325 (CDNA 3)"
-      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi300-08052025"
+      DEFAULT_IMAGE="$VLLM_IMAGE_MI300"
       ;;
     gfx950)
       DETECTED_GPU_TYPE="mi355"
       DETECTED_GPU_NAME="AMD Instinct MI350X (CDNA 3)"
-      DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi355-08052025"
+      DEFAULT_IMAGE="$VLLM_IMAGE_MI355"
       ;;
     gfx90a)
       DETECTED_GPU_TYPE="mi200"
       DETECTED_GPU_NAME="AMD Instinct MI200 series (CDNA 2)"
-      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
+      DEFAULT_IMAGE="$VLLM_IMAGE_FALLBACK"
       ;;
     gfx908)
       DETECTED_GPU_TYPE="mi100"
       DETECTED_GPU_NAME="AMD Instinct MI100 (CDNA)"
-      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
+      DEFAULT_IMAGE="$VLLM_IMAGE_FALLBACK"
       ;;
     gfx1100|gfx1101|gfx1102|gfx1103)
       DETECTED_GPU_TYPE="rdna3"
       DETECTED_GPU_NAME="AMD Radeon RDNA 3"
-      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
+      DEFAULT_IMAGE="$VLLM_IMAGE_RDNA3"
       ;;
     *)
       DETECTED_GPU_TYPE="unknown"
       DETECTED_GPU_NAME="Unknown AMD GPU (ISA: ${gpu_isa:-not detected})"
-      DEFAULT_IMAGE="docker.io/rocm/vllm:latest"
+      DEFAULT_IMAGE="$VLLM_IMAGE_FALLBACK"
       ;;
   esac
 
@@ -959,15 +984,15 @@ detect_gpu_and_select_image() {
     case "$GPU_TYPE" in
       r9700)
         DETECTED_GPU_TYPE="r9700"
-        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-r9700-08052025"
+        DEFAULT_IMAGE="$VLLM_IMAGE_RDNA4"
         ;;
       mi300)
         DETECTED_GPU_TYPE="mi300"
-        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi300-08052025"
+        DEFAULT_IMAGE="$VLLM_IMAGE_MI300"
         ;;
       mi355)
         DETECTED_GPU_TYPE="mi355"
-        DEFAULT_IMAGE="docker.io/rocm/vllm-dev:open-mi355-08052025"
+        DEFAULT_IMAGE="$VLLM_IMAGE_MI355"
         ;;
       *)
         log "WARNING: Unknown GPU_TYPE '$GPU_TYPE'. Using auto-detection."
@@ -1002,12 +1027,12 @@ else
   # Fallback: use provided GPU_TYPE or default image
   if [[ "$GPU_TYPE" != "auto" ]]; then
     case "$GPU_TYPE" in
-      r9700)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-r9700-08052025}"; DETECTED_GPU_TYPE="r9700" ;;
-      mi300)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-mi300-08052025}"; DETECTED_GPU_TYPE="mi300" ;;
-      mi355)  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm-dev:open-mi355-08052025}"; DETECTED_GPU_TYPE="mi355" ;;
+      r9700)  VLLM_IMAGE="${VLLM_IMAGE:-$VLLM_IMAGE_RDNA4}"; DETECTED_GPU_TYPE="r9700" ;;
+      mi300)  VLLM_IMAGE="${VLLM_IMAGE:-$VLLM_IMAGE_MI300}"; DETECTED_GPU_TYPE="mi300" ;;
+      mi355)  VLLM_IMAGE="${VLLM_IMAGE:-$VLLM_IMAGE_MI355}"; DETECTED_GPU_TYPE="mi355" ;;
     esac
   fi
-  VLLM_IMAGE="${VLLM_IMAGE:-docker.io/rocm/vllm:latest}"
+  VLLM_IMAGE="${VLLM_IMAGE:-$VLLM_IMAGE_FALLBACK}"
   log "rocminfo not available; using image: ${VLLM_IMAGE}"
   log "  (Set GPU_TYPE=r9700|mi300|mi355 to use GPU-specific optimized images)"
 fi
@@ -1430,7 +1455,7 @@ if ! docker pull "${VLLM_IMAGE}" 2>&1; then
   log "║  Then re-run with the correct image:                                          ║"
   log "║    VLLM_IMAGE=rocm/vllm:<tag> sudo bash $0"
   log "║                                                                               ║"
-  log "║  Common tags: latest, rocm6.3.1_vllm_0.8.5_20250521                           ║"
+  log "║  Common tags: latest, rocm7.0.0_vllm_0.11.2_20251210                          ║"
   log "║                                                                               ║"
   log "║  Docs: https://docs.vllm.ai/en/latest/getting_started/installation/gpu/      ║"
   log "╚═══════════════════════════════════════════════════════════════════════════════╝"

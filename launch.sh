@@ -43,17 +43,17 @@ export MODEL_ID="mistralai/Mistral-7B-Instruct-v0.2"
 
 # GPU type for automatic image selection
 # Valid values: r9700, mi300, mi355, auto
-#   - r9700: Radeon AI PRO R9700 (RDNA 4) → rocm/vllm-dev:open-r9700-08052025
-#   - mi300: MI300X/MI325 (CDNA 3) → rocm/vllm-dev:open-mi300-08052025
-#   - mi355: MI350X (CDNA 3) → rocm/vllm-dev:open-mi355-08052025
-#   - auto: Auto-detect GPU type (default)
+#   - r9700: Radeon AI PRO R9700 (RDNA 4) → rocm/vllm:rocm7.13.0_gfx120X-all_*
+#   - mi300: MI300X/MI325 (CDNA 3) → rocm/vllm:rocm7.13.0_gfx94X-dcgpu_*
+#   - mi355: MI350X (CDNA 3) → rocm/vllm:rocm7.13.0_gfx950-dcgpu_*
+#   - auto: Auto-detect GPU type (default); RDNA 3 → rocm7.13.0_gfx110X-all_*
 export GPU_TYPE="auto"
 
 # vLLM Docker image (leave empty for auto-detection based on GPU_TYPE)
 # Manual override examples:
 #   - rocm/vllm:latest
-#   - rocm/vllm:rocm6.3.1_vllm_0.8.5_20250521
-#   - rocm/vllm-dev:open-r9700-08052025
+#   - rocm/vllm:rocm7.0.0_vllm_0.11.2_20251210
+#   - rocm/vllm:rocm7.13.0_gfx110X-all_ubuntu24.04_py3.13_pytorch_2.10.0_vllm_0.19.1
 # export VLLM_IMAGE=""
 
 # GPU isolation method: "env" or "devices"
@@ -204,7 +204,11 @@ export MIN_ROCM_VERSION="6.0"
 export EXPECTED_GPU_COUNT="6"
 
 # ROCm version to install (if not already installed)
-export ROCM_VERSION="6.3"
+export ROCM_VERSION="7.2.4"
+
+# AMDGPU kernel driver repo version paired with ROCM_VERSION
+# (since ROCm 7.x the driver is versioned separately; 30.30.4 pairs with 7.2.4)
+export AMDGPU_DRIVER_VERSION="30.30.4"
 
 # ============================================================================
 # Launch the main installation script
